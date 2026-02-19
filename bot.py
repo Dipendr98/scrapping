@@ -925,6 +925,7 @@ def main() -> None:
     app.add_handler(CommandHandler("export", export_txt))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("approve", approve))
+    app.add_handler(CommandHandler("start_scrape", start_scrape))
     app.add_handler(CommandHandler("setup_creds", setup_creds))
 
 
