@@ -41,9 +41,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("telegram_bot")
 
-# NOTE: Set these as environment variables. Never commit real tokens to git.
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
+# Bot credentials — env vars take priority, fallback to hardcoded values
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8191911612:AAFZ1ZiBnIECFiTff813I8FRp1YhuXU8yEw")
+OWNER_ID = int(os.environ.get("OWNER_ID", "7931350533"))
 BOT_DB_PATH = os.environ.get("BOT_DB_PATH", "bot_data.sqlite3").strip() or "bot_data.sqlite3"
 SCRAPER_UA = os.environ.get("SCRAPER_UA", "SettingsFetchBot/1.0 (contact: you@example.com)")
 
