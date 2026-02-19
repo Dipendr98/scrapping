@@ -79,7 +79,7 @@ def extract_cc(text):
     return found
 
 
-def _build_session():
+def _build_session(proxy=None):
     """Build a cloudscraper session that bypasses Cloudflare protection."""
     s = cloudscraper.create_scraper(
         browser={
@@ -95,12 +95,17 @@ def _build_session():
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
     })
+    if proxy:
+        s.proxies = {
+            "http": proxy,
+            "https": proxy,
+        }
     return s
 
 
 class ForumScraper:
     def __init__(self, username, password, domain, login_url, login_page,
-                 start_url, status_callback=None, max_workers=15):
+                 start_url, status_callback=None, max_workers=15, proxy=None):
         self.username = username
         self.password = password
         self.domain = domain
@@ -110,7 +115,8 @@ class ForumScraper:
         self.start_url = start_url
         self.status_callback = status_callback
         self.max_workers = max_workers
-        self.session = _build_session()
+        self.proxy = proxy
+        self.session = _build_session(proxy)
         self.running = False
         self._seen_threads = set()  # dedup across pages
 
@@ -124,7 +130,7 @@ class ForumScraper:
     def login(self):
         """Login to the forum using cloudscraper with retries."""
         for attempt in range(3):
-            self.session = _build_session()  # Refresh session/fingerprint on retry
+            self.session = _build_session(self.proxy)  # Refresh session/fingerprint on retry
             try:
                 r = self.session.get(self.login_page, timeout=15)
                 soup = BeautifulSoup(r.text, 'html.parser')

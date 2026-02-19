@@ -79,6 +79,7 @@ class UserSettings:
     forum_login_url: Optional[str] = None
     forum_login_page: Optional[str] = None
     is_subscribed: bool = False
+    proxy: Optional[str] = None
 
 
 # ── Database helpers ───────────────────────────────────────────────────────────
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
     forum_login_url TEXT,
     forum_login_page TEXT,
     is_subscribed TINYINT(1) NOT NULL DEFAULT 0,
-    updated_at VARCHAR(32) NOT NULL
+    updated_at VARCHAR(32) NOT NULL,
+    proxy VARCHAR(255)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
@@ -111,7 +113,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
     forum_login_url TEXT,
     forum_login_page TEXT,
     is_subscribed INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    proxy TEXT
 )
 """
 
@@ -131,6 +134,15 @@ def _mysql_connect():
         pool_size=5,
         pool_reset_session=True,
     )
+    # Migration: Add proxy column if not exists
+    try:
+        cur = conn.cursor()
+        cur.execute("SHOW COLUMNS FROM user_settings LIKE 'proxy'")
+        if not cur.fetchone():
+            cur.execute("ALTER TABLE user_settings ADD COLUMN proxy VARCHAR(255)")
+        cur.close()
+    except Exception:
+        pass
     return conn
 
 
@@ -146,6 +158,7 @@ def _sqlite_connect() -> sqlite3.Connection:
         ("forum_login_page", "TEXT"),
         ("is_subscribed", "INTEGER NOT NULL DEFAULT 0"),
         ("password_hash", "TEXT"),
+        ("proxy", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE user_settings ADD COLUMN {col} {ddl}")
@@ -167,7 +180,7 @@ def _init_db() -> None:
             pass
 
 
-_SELECT_COLS = "username, url, password_hash, forum_username, forum_password, forum_domain, forum_login_url, forum_login_page, is_subscribed"
+_SELECT_COLS = "username, url, password_hash, forum_username, forum_password, forum_domain, forum_login_url, forum_login_page, is_subscribed, proxy"
 
 # ── Fast in-memory settings cache (30s TTL) ─────────────────────────────────
 import time as _time
@@ -223,7 +236,7 @@ def get_settings(telegram_user_id: int) -> UserSettings:
         _cache_set(telegram_user_id, result)
         return result
 
-    username, url, password_hash, f_user, f_pass, f_domain, f_l_url, f_l_page, is_sub = row
+    username, url, password_hash, f_user, f_pass, f_domain, f_l_url, f_l_page, is_sub, proxy = row
     result = UserSettings(
         telegram_user_id=telegram_user_id,
         username=username,
@@ -235,6 +248,7 @@ def get_settings(telegram_user_id: int) -> UserSettings:
         forum_login_url=f_l_url,
         forum_login_page=f_l_page,
         is_subscribed=bool(is_sub),
+        proxy=proxy,
     )
     _cache_set(telegram_user_id, result)
     return result
@@ -252,6 +266,7 @@ def upsert_settings(
     forum_login_url: Optional[str] = None,
     forum_login_page: Optional[str] = None,
     is_subscribed: Optional[bool] = None,
+    proxy: Optional[str] = None,
 ) -> UserSettings:
     _cache_invalidate(telegram_user_id)
     current = get_settings(telegram_user_id)
@@ -266,6 +281,7 @@ def upsert_settings(
         forum_login_url=forum_login_url if forum_login_url is not None else current.forum_login_url,
         forum_login_page=forum_login_page if forum_login_page is not None else current.forum_login_page,
         is_subscribed=is_subscribed if is_subscribed is not None else current.is_subscribed,
+        proxy=proxy if proxy is not None else current.proxy,
     )
     now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -277,8 +293,8 @@ def upsert_settings(
             INSERT INTO user_settings
                 (telegram_user_id, username, url, password_hash,
                  forum_username, forum_password, forum_domain,
-                 forum_login_url, forum_login_page, is_subscribed, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 forum_login_url, forum_login_page, is_subscribed, proxy, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 username=VALUES(username),
                 url=VALUES(url),
@@ -289,6 +305,7 @@ def upsert_settings(
                 forum_login_url=VALUES(forum_login_url),
                 forum_login_page=VALUES(forum_login_page),
                 is_subscribed=VALUES(is_subscribed),
+                proxy=VALUES(proxy),
                 updated_at=VALUES(updated_at)
             """.strip(),
             (
@@ -302,6 +319,7 @@ def upsert_settings(
                 next_settings.forum_login_url,
                 next_settings.forum_login_page,
                 int(next_settings.is_subscribed),
+                next_settings.proxy,
                 now,
             ),
         )
@@ -314,8 +332,8 @@ def upsert_settings(
                 INSERT INTO user_settings
                     (telegram_user_id, username, url, password_hash,
                      forum_username, forum_password, forum_domain,
-                     forum_login_url, forum_login_page, is_subscribed, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     forum_login_url, forum_login_page, is_subscribed, proxy, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(telegram_user_id) DO UPDATE SET
                     username=excluded.username,
                     url=excluded.url,
@@ -326,6 +344,7 @@ def upsert_settings(
                     forum_login_url=excluded.forum_login_url,
                     forum_login_page=excluded.forum_login_page,
                     is_subscribed=excluded.is_subscribed,
+                    proxy=excluded.proxy,
                     updated_at=excluded.updated_at
                 """.strip(),
                 (
@@ -339,6 +358,7 @@ def upsert_settings(
                     next_settings.forum_login_url,
                     next_settings.forum_login_page,
                     int(next_settings.is_subscribed),
+                    next_settings.proxy,
                     now,
                 ),
             )
@@ -897,6 +917,7 @@ async def post_init(app: Application) -> None:
         ("start_scrape", "Start scraping cards"),
         ("help", "Show help message"),
         ("setusername", "Set bot username"),
+        ("setproxy", "Set proxy (http/socks5)"),
         ("login", "Login to the bot"),
         ("logout", "Logout of the bot"),
     ])
@@ -922,6 +943,7 @@ def main() -> None:
     app.add_handler(CommandHandler("setpassword", setpassword))
     app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("logout", logout))
+    app.add_handler(CommandHandler("setproxy", setproxy))
     app.add_handler(CommandHandler("export", export_txt))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("approve", approve))
@@ -970,6 +992,63 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         log.error(f"Failed to notify owner: {e}")
         await reply("❌ Error contacting the admin.")
+
+async def setproxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set or view the proxy for scraping."""
+    if not update.effective_user or not update.message:
+        return
+    
+    user_id = update.effective_user.id
+    
+    if not context.args:
+        s = get_settings(user_id)
+        if s.proxy:
+            await update.message.reply_text(f"🌐 Current Proxy: `{s.proxy}`", parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text(
+                "🌐 No proxy set. To set one:\n`/setproxy http://user:pass@host:port`\n\nTo remove:\n`/setproxy delete`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        return
+
+    proxy_url = context.args[0].strip()
+    if proxy_url.lower() in ("none", "delete", "remove"):
+        # upsert_settings handles None correctly if we pass it explicitly? The function signature says Optional[str] = None
+        # But upsert specific logic is: if proxy is not None else current.proxy
+        # WAIT. My upsert logic prevents clearing fields!
+        # "proxy=proxy if proxy is not None else current.proxy"
+        # I need to fix upsert logic or hack around it. 
+        # Actually I can't easily clear it with my current upsert logic without passing a special sentinel.
+        # I will handle it by raw SQL or by modifying upsert logic later. For now, empty string is fine?
+        # No, empty string might break python requests.
+        # Let's check upsert logic again.
+        pass # I'll just skip the delete logic implementation for a second and check upsert.
+        
+    # Re-reading upsert logic:
+    # proxy=proxy if proxy is not None else current.proxy
+    # This means I cannot set it to None using the currrent function if I pass None.
+    # I should have used a sentinel. 
+    # Quick fix: I'll accept empty string as "delete" and convert to NULL in DB.
+    
+    if proxy_url.lower() in ("none", "delete", "remove"):
+         # We need to manually clear it or update valid logic. 
+         # Since I can't easily change upsert signature everywhere, I'll direct execute SQL here for delete.
+         if USE_MYSQL:
+             conn = _mysql_connect()
+             cur = conn.cursor()
+             cur.execute("UPDATE user_settings SET proxy = NULL WHERE telegram_user_id = %s", (user_id,))
+             cur.close()
+             conn.close()
+         else:
+             with _sqlite_connect() as conn:
+                 conn.execute("UPDATE user_settings SET proxy = NULL WHERE telegram_user_id = ?", (user_id,))
+         _cache_invalidate(user_id)
+         await update.message.reply_text("✅ Proxy removed.")
+         return
+
+    upsert_settings(user_id, proxy=proxy_url)
+    await update.message.reply_text(f"✅ Proxy set!", parse_mode=ParseMode.MARKDOWN)
+
 
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
@@ -1110,7 +1189,8 @@ async def _run_scraper_logic(update: Update, context: ContextTypes.DEFAULT_TYPE,
         login_url=s.forum_login_url,
         login_page=s.forum_login_page,
         start_url=s.url,  # The main forum URL to scrape
-        status_callback=status_callback
+        status_callback=status_callback,
+        proxy=s.proxy
     )
 
     # callback wrapper for the sync parts
