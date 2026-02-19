@@ -3,3 +3,4 @@ beautifulsoup4
 colorama
 python-telegram-bot
 mysql-connector-python
+cloudscraper

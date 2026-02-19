@@ -1,12 +1,10 @@
 import re
-import requests
 import random
 import asyncio
 import time
+import cloudscraper
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
@@ -49,8 +47,14 @@ def extract_cc(text):
 
 
 def _build_session():
-    """Build a fast, resilient requests.Session with keep-alive and retries."""
-    s = requests.Session()
+    """Build a cloudscraper session that bypasses Cloudflare protection."""
+    s = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True,
+        }
+    )
     s.headers.update({
         'User-Agent': random.choice(USER_AGENTS),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -58,19 +62,6 @@ def _build_session():
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
     })
-    # Retry adapter with connection pooling
-    retry = Retry(
-        total=3,
-        backoff_factor=0.3,
-        status_forcelist=[500, 502, 503, 504, 429],
-    )
-    adapter = HTTPAdapter(
-        max_retries=retry,
-        pool_connections=20,
-        pool_maxsize=20,
-    )
-    s.mount('https://', adapter)
-    s.mount('http://', adapter)
     return s
 
 
