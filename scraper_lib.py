@@ -89,36 +89,51 @@ class ForumScraper:
                 pass
 
     def login(self):
-        """Login to the forum using requests."""
-        self.session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
-        try:
-            r = self.session.get(self.login_page, timeout=12)
-            soup = BeautifulSoup(r.text, 'html.parser')
-
+        """Login to the forum using cloudscraper with retries."""
+        for attempt in range(3):
+            self.session = _build_session()  # Refresh session/fingerprint on retry
             try:
-                token = soup.find("input", {"name": "_xfToken"})["value"]
-            except TypeError:
-                return False, "Could not find _xfToken. Cloudflare or IP ban?"
+                r = self.session.get(self.login_page, timeout=15)
+                soup = BeautifulSoup(r.text, 'html.parser')
 
-            data = {
-                "login": self.username,
-                "password": self.password,
-                "_xfToken": token,
-                "remember": "1"
-            }
+                # Check for Cloudflare challenge success
+                if "Just a moment..." in r.text or "Checking your browser" in r.text:
+                    if attempt < 2:
+                        time.sleep(3)
+                        continue
+                    return False, "Stuck on Cloudflare challenge page."
 
-            self.session.post(self.login_url, data=data, timeout=12)
+                try:
+                    token = soup.find("input", {"name": "_xfToken"})["value"]
+                except TypeError:
+                    if attempt < 2:
+                        time.sleep(2)
+                        continue
+                    # Debug: what did we get instead?
+                    title = soup.title.string.strip() if soup.title else "No Title"
+                    return False, f"Could not find _xfToken. Page title: '{title}'"
 
-            # Verify login
-            test = self.session.get(self.base_url + "/", timeout=12)
-            text_lower = test.text.lower()
-            if self.username.lower() in text_lower or "log out" in text_lower or "deconnexion" in text_lower:
-                return True, "Login successful!"
-            else:
-                return False, "Login failed (session check failed)."
+                data = {
+                    "login": self.username,
+                    "password": self.password,
+                    "_xfToken": token,
+                    "remember": "1"
+                }
 
-        except Exception as e:
-            return False, f"Login exception: {str(e)}"
+                self.session.post(self.login_url, data=data, timeout=15)
+
+                # Verify login
+                test = self.session.get(self.base_url + "/", timeout=15)
+                text_lower = test.text.lower()
+                if self.username.lower() in text_lower or "log out" in text_lower or "deconnexion" in text_lower:
+                    return True, "Login successful!"
+                
+            except Exception as e:
+                if attempt == 2:
+                    return False, f"Login exception: {str(e)}"
+                time.sleep(2)
+        
+        return False, "Login failed after 3 attempts."
 
     def scrape_thread(self, url):
         """Scrape a single thread for CC data."""
