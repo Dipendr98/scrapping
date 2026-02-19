@@ -994,7 +994,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await reply("❌ Error contacting the admin.")
 
 async def setproxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Set or view the proxy for scraping."""
+    """Set or view the proxy for scraping with validation."""
     if not update.effective_user or not update.message:
         return
     
@@ -1012,27 +1012,9 @@ async def setproxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     proxy_url = context.args[0].strip()
-    if proxy_url.lower() in ("none", "delete", "remove"):
-        # upsert_settings handles None correctly if we pass it explicitly? The function signature says Optional[str] = None
-        # But upsert specific logic is: if proxy is not None else current.proxy
-        # WAIT. My upsert logic prevents clearing fields!
-        # "proxy=proxy if proxy is not None else current.proxy"
-        # I need to fix upsert logic or hack around it. 
-        # Actually I can't easily clear it with my current upsert logic without passing a special sentinel.
-        # I will handle it by raw SQL or by modifying upsert logic later. For now, empty string is fine?
-        # No, empty string might break python requests.
-        # Let's check upsert logic again.
-        pass # I'll just skip the delete logic implementation for a second and check upsert.
-        
-    # Re-reading upsert logic:
-    # proxy=proxy if proxy is not None else current.proxy
-    # This means I cannot set it to None using the currrent function if I pass None.
-    # I should have used a sentinel. 
-    # Quick fix: I'll accept empty string as "delete" and convert to NULL in DB.
     
+    # Handle deletion
     if proxy_url.lower() in ("none", "delete", "remove"):
-         # We need to manually clear it or update valid logic. 
-         # Since I can't easily change upsert signature everywhere, I'll direct execute SQL here for delete.
          if USE_MYSQL:
              conn = _mysql_connect()
              cur = conn.cursor()
@@ -1043,11 +1025,46 @@ async def setproxy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
              with _sqlite_connect() as conn:
                  conn.execute("UPDATE user_settings SET proxy = NULL WHERE telegram_user_id = ?", (user_id,))
          _cache_invalidate(user_id)
-         await update.message.reply_text("✅ Proxy removed.")
+         await update.message.reply_text("✅ Proxy removed from database.")
          return
 
-    upsert_settings(user_id, proxy=proxy_url)
-    await update.message.reply_text(f"✅ Proxy set!", parse_mode=ParseMode.MARKDOWN)
+    # FORMAT CHECK
+    if not (proxy_url.startswith("http://") or proxy_url.startswith("https://") or proxy_url.startswith("socks5://")):
+        await update.message.reply_text("❌ Invalid format. Must start with `http://`, `https://`, or `socks5://`")
+        return
+
+    # CONNECTION CHECK
+    msg = await update.message.reply_text("⏳ Verifying proxy connection... (Please wait ~10s)")
+    
+    try:
+        def check_proxy():
+            try:
+                proxies = {"http": proxy_url, "https": proxy_url}
+                # Check IP first
+                r = requests.get("https://api.ipify.org?format=json", proxies=proxies, timeout=10)
+                if r.status_code == 200:
+                    return True, r.json().get("ip")
+            except Exception:
+                pass
+            
+            # Fallback check
+            try:
+                proxies = {"http": proxy_url, "https": proxy_url}
+                r = requests.get("https://www.google.com", proxies=proxies, timeout=10)
+                return r.status_code == 200, "Google OK"
+            except Exception as e:
+                return False, str(e)
+
+        is_valid, detail = await asyncio.to_thread(check_proxy)
+
+        if is_valid:
+            upsert_settings(user_id, proxy=proxy_url)
+            await msg.edit_text(f"✅ Proxy Verified & Saved!\nIP/Status: {detail}")
+        else:
+            await msg.edit_text(f"❌ Proxy Verification Failed.\nError: {detail}\n\nPlease check your proxy and type again.")
+
+    except Exception as e:
+        await msg.edit_text(f"❌ Verification Error: {e}")
 
 
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
