@@ -1024,13 +1024,20 @@ async def action_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await q.answer("You are not the owner.", show_alert=True)
             return
         target_id = int(data.split(":")[2])
-        upsert_settings(target_id, is_subscribed=True)
-        await q.answer(f"✅ Approved!")
-        # Update the owner's message to show it was approved
-        await q.edit_message_text(
-            text=q.message.text + "\n\n✅ <b>APPROVED</b>",
-            parse_mode=ParseMode.HTML,
-        )
+        try:
+            upsert_settings(target_id, is_subscribed=True)
+        except Exception as e:
+            log.error("Failed to approve user %s: %s", target_id, e)
+            await q.answer(f"❌ DB error: {e}", show_alert=True)
+            return
+        await q.answer("✅ Approved!")
+        try:
+            await q.edit_message_text(
+                text=q.message.text + "\n\n✅ <b>APPROVED</b>",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            log.warning("Could not edit approve message: %s", e)
         try:
             creds_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔑 Setup Credentials & Start Scraping", callback_data="action:setup_creds")],
@@ -1040,8 +1047,8 @@ async def action_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 text="✅ Your subscription has been approved!\n\nTap below to configure your credentials and the scraper will start automatically.",
                 reply_markup=creds_keyboard,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Could not notify approved user %s: %s", target_id, e)
     elif data.startswith("admin:reject:"):
         if q.from_user.id != OWNER_ID:
             await q.answer("You are not the owner.", show_alert=True)
